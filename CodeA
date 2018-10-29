@@ -1,0 +1,382 @@
+
+#include <LibRobus.h>
+#include <qtrSensors.h>
+#include <math.h>
+
+void faireUnBut();
+
+#define  NUM_SENSORS 8
+#define TIMEOUT 2500
+#define NUM_SAMPLES_PER_SENSOR  4  // average 4 analog samples per sensor reading
+#define EMITTER_PIN 2
+
+bool ballon=false;
+
+//**************************parametres pour tourner************************
+const double circonferenceRoueRB = 24.19;
+const double circonferenceCercleUneRoue = 116.43;  //116.43  116(trop vite)
+const double circonferenceCercleDeuxRoues = 58.119; //58.119
+double virage_PpSec = 3000;
+double vitesseVirageT = 0.30;
+double v_enPulseParSec = 6000;
+#define tempsDeCycle 100
+#define kg 0.02
+#define kd 0.02
+
+#define Kp 0.0000007 // experiment to determine this, start by something small that just makes your bot follow the line at a slow speed
+#define Kd 0.000021 // experiment to determine this, slowly increase the speeds and adjust this value. ( Note: Kp < Kd) 
+
+int position;
+int lastError=0;
+double rightMaxSpeed = 0.50; // max speed of the robot
+double leftMaxSpeed = 0.50; // max speed of the robot
+double rightBaseSpeed = 0.2; // this is the speed at which the motors should spin when the robot is perfectly on the line
+double leftBaseSpeed = 0.2;
+double rightMotorSpeed;
+double leftMotorSpeed;
+
+  QTRSensorsAnalog qtra((unsigned char[]) {3, 4, 5, 6, 8, 9, 10, 11},
+  NUM_SENSORS, NUM_SAMPLES_PER_SENSOR, EMITTER_PIN);
+  unsigned int sensorValues[NUM_SENSORS];
+
+double fltSensorCalc;
+unsigned int port = 2;
+ 
+ 
+
+void sifflet(){
+
+  int j = 0;
+    float sifflet = analogRead(12);
+    float bruit = analogRead(13);
+    Serial.print(bruit);
+    Serial.print("//");
+    Serial.print(sifflet);
+    Serial.print("//");
+    Serial.println(bruit-sifflet);
+    if (bruit - sifflet <= 0){
+      Serial.print("****");
+      Serial.print("5KHz?");
+      Serial.println("****");
+      j += 1;
+      if (j>=10){
+      Serial.print("/////");
+      Serial.print("SIFFLET");
+      Serial.println("/////");
+      MOTOR_SetSpeed(0,0);
+      MOTOR_SetSpeed(1,0);
+      delay(11000);
+      MOTOR_SetSpeed(0,0.3);
+      MOTOR_SetSpeed(1,0.3);
+      }
+    }
+  }//Stop donner par victoria
+
+
+
+
+
+
+
+
+
+
+
+
+
+//***********************  TOURNER  ***********************
+void tournerSurPlace(double degres, int g_ou_d){ //gauche == -1, droite == 1
+  double distanceAparcourirEnCm = degres/360 * circonferenceCercleDeuxRoues;
+  double nbreDePulseTotal = distanceAparcourirEnCm/circonferenceRoueRB * 3200;
+  AsservissementDesMoteurs2(nbreDePulseTotal,virage_PpSec*g_ou_d,virage_PpSec*-1*g_ou_d,tempsDeCycle);
+}
+void AsservissementDesMoteurs2(int nbreDePulseTotal,double nbreDePulse_sec_G,double nbreDePulse_sec_D, double delay_){
+  double vitesseDesireeG = CalculVitesse(delay_,(nbreDePulse_sec_G*delay_/1000));
+  double vitesseDesireeD = CalculVitesse(delay_,(nbreDePulse_sec_D*delay_/1000));
+  double vitesseG = vitesseDesireeG/100;
+  double vitesseD = vitesseDesireeD/100;
+  double erreurG,erreurD;
+  bool activationDesRoues=true;
+  double pulseParCycleGauche,pulseParCycleDroit;
+  double pulseTotalG=0,pulseTotalD=0;
+  EncoderReset();
+  MOTOR_SetSpeed(0,vitesseG);
+  MOTOR_SetSpeed(1,vitesseD);
+  while(activationDesRoues){
+    activationDesRoues = DelayAsservissement(delay_,nbreDePulseTotal);
+    pulseParCycleGauche = ENCODER_Read(0) - pulseTotalG;
+    pulseParCycleDroit = ENCODER_Read(1) - pulseTotalD;
+    pulseTotalG=ENCODER_Read(0);
+    pulseTotalD=ENCODER_Read(1);
+    
+    if(activationDesRoues){
+      erreurG = vitesseDesireeG - CalculVitesse(delay_,pulseParCycleGauche);
+      erreurD = vitesseDesireeD - CalculVitesse(delay_,pulseParCycleDroit);
+      vitesseG += erreurG*kg;
+      vitesseD += erreurD*kd;
+    MOTOR_SetSpeed(0,vitesseG);
+    MOTOR_SetSpeed(1,vitesseD);
+    }
+  }
+}
+bool DelayAsservissement(int delay_, int nbreDePulseTotal){
+  bool activationDesRoues = true;
+  int i = 0;
+  while (i<delay_){
+    if (ENCODER_Read(0)>=nbreDePulseTotal||ENCODER_Read(1)>=nbreDePulseTotal){
+      activationDesRoues=false;
+      i += delay_;
+      Serial.println("La distance totale a ete parcourue. ");
+      Serial.println(ENCODER_Read(0));
+    }
+    else if (ROBUS_IsBumper(3)){
+      Arretdurgence();
+      i+=delay_;
+    }
+    else{
+      i++;
+      delay(1);
+    }
+  }
+  return activationDesRoues;
+}
+double CalculVitesse(double delay_,double nbreDePulseTotal){
+  double vitesse = nbreDePulseTotal/delay_;
+  return vitesse;
+}
+void Arretdurgence(){
+  MotorSpeed(0);
+  Serial.println("Arret d'urgence");
+}
+void MotorSpeed(double vitesse){
+  MOTOR_SetSpeed(0,vitesse);
+  MOTOR_SetSpeed(1,vitesse);
+}
+void Motor2Speed(double vitesseG, double vitesseD){
+  MOTOR_SetSpeed(0,vitesseG);
+  MOTOR_SetSpeed(1,vitesseD);
+}
+void EncoderReset(){
+  ENCODER_Reset(0);
+  ENCODER_Reset(1);
+}
+//********************* ZONE NOIR ****************
+  void couleurNoir(){
+    int compteur=8;
+    while(compteur>7){
+        tournerSurPlace(180,1);  
+        MOTOR_SetSpeed(1,0.3);
+        MOTOR_SetSpeed(0,0.3);
+        sifflet();
+    compteur=0;
+        qtra.readLine(sensorValues);//Line follower readings
+      for (unsigned int i = 0; i < NUM_SENSORS; i++)
+        {
+
+          if (sensorValues[i]>900) compteur++;
+        } 
+    }
+ }
+
+//*********************  SUIVRE_LIGNE  ****************
+
+  void suivreLigne(unsigned int position){
+
+  int error = position-3500;//3500 car 1000*(8-1)/2
+  Serial.print("erreur : ");Serial.println(error);
+  Serial.print("erreur - lastErreur : ");Serial.println(error - lastError);
+  double vitesseAjuste = Kp * error + Kd * (error - lastError);
+  Serial.print("vitesseAjuste : ");Serial.println(vitesseAjuste);
+
+  lastError = error;
+
+  rightMotorSpeed += vitesseAjuste;
+  leftMotorSpeed -= vitesseAjuste;
+  
+  if (rightMotorSpeed > rightMaxSpeed ) rightMotorSpeed = rightMaxSpeed; // prevent the motor from going beyond max speed
+  if (leftMotorSpeed > leftMaxSpeed ) leftMotorSpeed = leftMaxSpeed; // prevent the motor from going beyond max speed
+  if (rightMotorSpeed < 0) rightMotorSpeed = 0; // keep the motor speed positive
+  if (leftMotorSpeed < 0) leftMotorSpeed = 0; // keep the motor speed positive
+  if (position >= 7000 || position <= 0){
+    rightMotorSpeed = 0;
+    leftMotorSpeed = 0;
+  }
+  
+  Serial.print("rightMotorSpeed : ");Serial.println(rightMotorSpeed);
+  Serial.print("leftMotorSpeed : ");Serial.println(leftMotorSpeed);
+  sifflet();
+  } 
+//*********************  RECHERCHE ****************
+  void rechercheLigne(){
+
+    while(qtra.readLine(sensorValues)<2000){
+      MOTOR_SetSpeed(0,0.5);
+      MOTOR_SetSpeed(1,0.2);
+      sifflet();
+    }
+    
+    suivreLigne(qtra.readLine(sensorValues));
+  }
+  
+
+//**********************  DISTANCE  ******************
+
+void distance(){
+      
+  float distanceHaut = 28/(ROBUS_ReadIR(1)*0.0048828125) - 7;
+  float distanceBas = 28/(ROBUS_ReadIR(0)*0.0048828125) - 2;
+
+  if (ballon){ //Evitement de chose
+    if(distanceHaut<20){
+        
+        tournerSurPlace(90,1);
+        MOTOR_SetSpeed(0,0.4);
+        MOTOR_SetSpeed(1,0.4);
+        delay(1000);
+        sifflet();
+        tournerSurPlace(90,-1);
+        MOTOR_SetSpeed(0,0.4);
+        MOTOR_SetSpeed(1,0.4);
+        delay(1000);
+        sifflet();
+        tournerSurPlace(90,-1);
+        MOTOR_SetSpeed(0,0.4);
+        MOTOR_SetSpeed(1,0.4);
+        faireUnBut();
+        
+
+    }
+
+  }
+  else{
+   if (distanceHaut-distanceBas<7 && distanceHaut<30){
+      MOTOR_SetSpeed(0,0.6);
+      MOTOR_SetSpeed(0,0.6);
+      while(distanceBas>10){
+        sifflet();
+      }
+      
+      ballon=true;
+      faireUnBut();
+     
+   }
+   else if(distanceHaut<15){
+     tournerSurPlace(90,1);
+     rechercheLigne();
+   }
+
+  }
+
+}//3 options : Mur(2 not moving)/Ballon (down one)/Robot(2 moving towards you)
+ 
+  void faireUnBut(){
+    
+    int compteur=0;
+    MOTOR_SetSpeed(0,0.4);
+    MOTOR_SetSpeed(1,0.4);
+   
+    
+     qtra.readLine(sensorValues);//Line follower readings
+    for (unsigned int i = 0; i < NUM_SENSORS; i++)
+    {
+    if(sensorValues[i]>0){
+      compteur++;
+    }
+   
+    }
+    if(compteur>6){
+
+    MOTOR_SetSpeed(0,0.7);
+    MOTOR_SetSpeed(1,0.7);
+    delay(250);
+    sifflet();
+    MOTOR_SetSpeed(0,0.4);
+    MOTOR_SetSpeed(1,0.4);
+    tournerSurPlace(180,0);
+    ballon=false;
+    
+    }
+   
+   
+  }//Follow and find a line to a goal then go until black line
+
+  void depart(int position){
+    MOTOR_SetSpeed(0,0.4);
+    MOTOR_SetSpeed(1,0.4);
+    delay(100);
+    while(ENCODER_Read(1)<1200){
+      suivreLigne(position);
+      sifflet();
+      delay(1000);
+    }
+    
+
+
+  }
+
+
+void setup(){
+
+  BoardInit();
+  
+   for(int i=0;i< 200;i++){
+     qtra.calibrate();
+   }
+   Serial.println("test");
+  while(ROBUS_IsBumper(2)==false){
+    unsigned int position = qtra.readLine(sensorValues);  
+    for(int i=0;i<NUM_SENSORS;i++){
+
+    Serial.print(sensorValues[i]);
+    }
+    Serial.println(position);
+  }
+    Serial.println("fin test");
+  delay(5000); 
+  
+  rightMotorSpeed = rightBaseSpeed;
+  leftMotorSpeed = leftBaseSpeed;
+  unsigned int position = qtra.readLine(sensorValues);//Line follower readings
+  depart(position);
+
+}
+
+
+
+
+void loop() {
+  
+  //******************  1  *********************
+  int compteur=0;
+  int position = qtra.readLine(sensorValues);
+  for(int i=0;i<NUM_SENSORS;i++)
+  {
+    if(sensorValues[i]==0){
+      Serial.println(sensorValues[i]);
+     compteur++;
+     }
+  }
+  
+  if(compteur<2)
+  {
+    rechercheLigne();
+  }
+  else if(compteur>6)
+  {
+    couleurNoir();
+  }
+  else
+  {
+    suivreLigne(position);
+  } 
+  sifflet();
+  
+  //******************  2  ******************
+   distance();
+   sifflet();
+     if(ballon){
+      faireUnBut();
+     }
+
+  
+  }
